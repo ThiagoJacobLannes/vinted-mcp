@@ -1,5 +1,7 @@
 # vinted-mcp
 
+<!-- mcp-name: io.github.ThiagoJacobLannes/vinted-mcp -->
+
 MCP server for searching second-hand listings on [Vinted](https://www.vinted.pt/), so Claude (or any MCP client) can answer "what does a used X go for?".
 
 **Anonymous and read-only.** No login, no account, no writes: it only searches. Not affiliated with Vinted.
@@ -21,6 +23,16 @@ Each listing has: title, price, price with Vinted's buyer protection fee (shippi
 Tip: `"cheap"` also pulls in loosely related listings. For "the cheapest X", use the default relevance sort with `price_max`.
 
 ## Install
+
+**Quickest** (needs [uv](https://docs.astral.sh/uv/)): no clone needed, it runs straight from PyPI.
+
+```bash
+claude mcp add vinted -- uvx vinted-search-mcp
+```
+
+For Claude Desktop, use `"command": "uvx", "args": ["vinted-search-mcp"]`.
+
+**From source:**
 
 Requires Python 3.10+.
 
