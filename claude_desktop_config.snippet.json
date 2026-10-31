@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vinted": {
+      "command": "python",
+      "args": ["-m", "vinted_mcp.server"]
+    }
+  }
+}
