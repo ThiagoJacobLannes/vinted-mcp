@@ -1,4 +1,4 @@
-"""FastMCP stdio server exposing anonymous Vinted (PT) search — read-only."""
+"""FastMCP stdio server exposing anonymous Vinted (PT) search, listing details and seller profiles — read-only."""
 
 from __future__ import annotations
 
@@ -87,6 +87,55 @@ def search(
         }
     except Exception as exc:  # noqa: BLE001 — surface a clean message to the model
         log.exception("search failed")
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def get_listing(listing: str, include_seller_profile: bool = True) -> dict[str, Any]:
+    """Full details of one Vinted listing: description, brand, size, condition, colour,
+    upload time, all photos, favourites, whether it is reserved, and who sells it
+    (username, star rating, number of reviews, last online).
+
+    Use it after `search` to look closer at a listing, or on a Vinted link the user pastes.
+
+    Args:
+        listing:                A listing URL (https://www.vinted.pt/items/123…) or its id.
+        include_seller_profile: Also open the seller's profile (one more page) and add
+                                positive/neutral/negative reviews, country, items sold,
+                                listings for sale, followers, verifications and their bio.
+    """
+    try:
+        c = client()
+        item = c.get_listing(listing)
+        if include_seller_profile and item["seller"]["id"]:
+            try:
+                item["seller"] = c.get_seller(item["seller"]["id"]) | {
+                    "info": item["seller"]["info"],
+                    "badges": item["seller"]["badges"],
+                }
+            except Exception as exc:  # noqa: BLE001 — keep the listing even if the profile fails
+                log.warning("seller profile failed: %s", exc)
+                item["seller"]["profile_error"] = str(exc)
+        return item
+    except Exception as exc:  # noqa: BLE001
+        log.exception("get_listing failed")
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def get_seller(seller: str) -> dict[str, Any]:
+    """A Vinted member's public profile: star rating, positive/neutral/negative reviews,
+    country, items sold, listings for sale, followers, last seen, verifications
+    (email, Facebook, Google…), holiday mode and their bio.
+
+    Args:
+        seller: A profile URL (https://www.vinted.pt/member/123…) or the member id
+                (the `seller.id` returned by get_listing).
+    """
+    try:
+        return client().get_seller(seller)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("get_seller failed")
         return {"error": str(exc)}
 
 

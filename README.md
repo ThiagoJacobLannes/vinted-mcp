@@ -4,9 +4,9 @@
 
 MCP server for searching second-hand listings on [Vinted](https://www.vinted.pt/), so Claude (or any MCP client) can answer "what does a used X go for?".
 
-**Anonymous and read-only.** No login, no account, no writes: it only searches. Not affiliated with Vinted.
+**Anonymous and read-only.** No login, no account, no writes: it only reads public pages. Not affiliated with Vinted.
 
-## Tool
+## Tools
 
 ### `search`
 Search listings, with optional filters. Returns the total number of matches and the listings for one page.
@@ -21,6 +21,21 @@ Parameters:
 Each listing has: title, price, price with Vinted's buyer protection fee (shipping is extra), brand, size, condition, link, photo, whether the seller is a business, and favourites.
 
 Tip: `"cheap"` also pulls in loosely related listings. For "the cheapest X", use the default relevance sort with `price_max`.
+
+### `get_listing`
+Everything about one listing, from its URL or id (for example one returned by `search`):
+title, price, the full description, brand, size, condition, colour, when it was uploaded,
+all photos, favourites, whether it is reserved, and the seller.
+
+Parameters:
+- `listing` — a listing URL (`https://www.vinted.pt/items/…`) or its id
+- `include_seller_profile` — default `true`: also opens the seller's profile and adds the details listed under `get_seller`. With `false`, the seller part is just username, star rating, number of reviews, badges and when they were last online (one page instead of two).
+
+### `get_seller`
+A member's public profile, from their profile URL or id: star rating (0–5, none when they have no reviews yet), positive / neutral / negative reviews, country (and city if they show it), items sold, listings for sale, followers, last seen, whether they are on holiday, verifications (email, Facebook, Google…), bundle discount and their bio.
+
+Parameters:
+- `seller` — a profile URL (`https://www.vinted.pt/member/…`) or the member id (`seller.id` from `get_listing`)
 
 ## Install
 
@@ -71,7 +86,7 @@ Portugal is the default. Set `VINTED_BASE_URL` to another Vinted domain (for exa
 
 ## How it works
 
-Vinted has no official API. The server loads Vinted's public catalog page for your search and reads the results the page already contains (they arrive as React Server Component data). If Vinted changes its page, the tool fails with a clear `{"error": ...}` instead of returning wrong data.
+Vinted has no official API. The server loads Vinted's public pages (the catalog page for a search, a listing page, a member's profile page) and reads the data those pages already contain (it arrives as React Server Component data). If Vinted changes its page, the tool fails with a clear `{"error": ...}` instead of returning wrong data.
 
 ## License
 
