@@ -16,6 +16,7 @@ modelled on kuantokusta-mcp.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -143,6 +144,42 @@ def _page_blocks(text: str) -> dict[str, dict[str, Any]]:
     return blocks
 
 
+_ROW = re.compile(rb"([0-9a-f]+):")
+_REF = re.compile(r"\$([0-9a-f]+)")
+_META_DESCRIPTION = re.compile(r'<meta name="description" content="([^"]*)"')
+
+
+def _text_rows(text: str) -> dict[str, str]:
+    """The long-text rows of a page payload ("<id>:T<hex byte length>,<text>"), keyed by row id.
+
+    React streams any long string (a long description or bio) as its own row and leaves
+    a "$<id>" reference where the string belongs. A text row has no closing newline, so
+    the payload is walked row by row, counting UTF-8 bytes.
+    """
+    b = text.encode("utf-8")
+    rows: dict[str, str] = {}
+    i = 0
+    while i < len(b):
+        m = _ROW.match(b, i)
+        if m and b[m.end():m.end() + 1] == b"T":
+            comma = b.find(b",", m.end())
+            try:
+                n = int(b[m.end() + 1:comma], 16)
+            except ValueError:
+                n = -1
+            if comma > 0 and n >= 0:
+                rows.setdefault(m.group(1).decode(), b[comma + 1:comma + 1 + n].decode("utf-8", "replace"))
+                i = comma + 1 + n
+                continue
+        nl = b.find(b"\n", i)
+        i = len(b) if nl < 0 else nl + 1
+    return rows
+
+
+def _clean(value: Any) -> str:
+    return html.unescape(value or "").strip() if isinstance(value, str) else ""
+
+
 def _photo_urls(photos: list[dict[str, Any]] | None) -> list[str]:
     return [p["url"] for p in (photos or []) if p.get("url")]
 
@@ -190,6 +227,8 @@ class VintedClient:
             params["price_to"] = price_max
 
         r = self._client.get(self.base + "/catalog", params=params)
+        if r.status_code == 429:
+            raise RuntimeError("Vinted is rate limiting requests right now; try again in a few minutes")
         r.raise_for_status()
         block = _extract_items_block(r.text)
 
@@ -219,13 +258,40 @@ class VintedClient:
         pagination = block.get("pagination") or {}
         return SearchResult(total=pagination.get("total_entries"), page=params["page"], items=items)
 
+    def _page(self, path: str, not_found: str) -> httpx.Response:
+        r = self._client.get(self.base + path)
+        if r.status_code == 404:
+            raise RuntimeError(not_found)
+        if r.status_code == 429:
+            raise RuntimeError("Vinted is rate limiting requests right now; try again in a few minutes")
+        r.raise_for_status()
+        return r
+
+    def _long_text(self, value: Any, text: str, page_html: str, meta_prefix: str | None = None) -> str:
+        """A string that may have been streamed as its own row ("$<id>"): follow the reference.
+
+        If the row can't be found, fall back to the page's meta description (which Vinted
+        writes as "<title> - <description>"), else return nothing rather than "$<id>".
+        """
+        m = _REF.fullmatch(value) if isinstance(value, str) else None
+        if not m:
+            return _clean(value)
+        found = _text_rows(text).get(m.group(1))
+        if found is not None:
+            return _clean(found)
+        log.warning("text row %s not found; using the meta description", m.group(1))
+        meta = _META_DESCRIPTION.search(page_html)
+        if meta and meta_prefix is not None:
+            desc = _clean(meta.group(1))
+            prefix = _clean(meta_prefix) + " - "
+            return desc[len(prefix):] if desc.startswith(prefix) else desc
+        return ""
+
     def get_listing(self, ref: str | int) -> dict[str, Any]:
         item_id = parse_item_id(ref)
-        r = self._client.get(f"{self.base}/items/{item_id}")
-        if r.status_code == 404:
-            raise RuntimeError(f"Listing {item_id} not found (sold, deleted or hidden)")
-        r.raise_for_status()
-        b = _page_blocks(_page_payload(r.text))
+        r = self._page(f"/items/{item_id}", f"Listing {item_id} not found (sold, deleted or hidden)")
+        text = _page_payload(r.text)
+        b = _page_blocks(text)
         if "description" not in b and "attributes" not in b:
             raise RuntimeError("Vinted page layout changed: no listing details found")
 
@@ -235,12 +301,13 @@ class VintedClient:
         user = b.get("user_info_header") or {}
         seller_id = user.get("seller_id") or offer.get("seller_id") or status.get("seller_id")
         price = offer.get("price") or {}
+        title = _clean(offer.get("title") or (b.get("gallery") or {}).get("accessibility_label", ""))
         return {
             "id": item_id,
-            "title": offer.get("title") or (b.get("gallery") or {}).get("accessibility_label", ""),
+            "title": title,
             "price": _amount(price),
             "currency": price.get("currency_code") or "EUR",
-            "description": (b.get("description") or {}).get("description", ""),
+            "description": self._long_text((b.get("description") or {}).get("description"), text, r.text, title),
             "brand": attrs.get("brand"),
             "size": attrs.get("size"),
             "condition": attrs.get("status"),
@@ -267,10 +334,7 @@ class VintedClient:
 
     def get_seller(self, ref: str | int) -> dict[str, Any]:
         member_id = parse_member_id(ref)
-        r = self._client.get(f"{self.base}/member/{member_id}")
-        if r.status_code == 404:
-            raise RuntimeError(f"Member {member_id} not found")
-        r.raise_for_status()
+        r = self._page(f"/member/{member_id}", f"Member {member_id} not found")
         text = _page_payload(r.text)
         anchor = text.find('"feedback_reputation"')
         start = text.rfind('{"id":%d,' % member_id, 0, anchor) if anchor >= 0 else -1
@@ -300,6 +364,6 @@ class VintedClient:
             "business": bool(u.get("business")),
             "verified": sorted(k for k, v in ver.items() if isinstance(v, dict) and v.get("valid")),
             "bundle_discount": bool((u.get("bundle_discount") or {}).get("enabled")),
-            "about": u.get("about") or "",
+            "about": self._long_text(u.get("about"), text, r.text),
             "profile_url": u.get("profile_url") or f"{self.base}/member/{member_id}",
         }

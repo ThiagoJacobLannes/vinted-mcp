@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vinted-search-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server for Vinted: search second-hand listings, read listing details and seller ratings (anonymous, read-only)."
 readme = "README.md"
 license = "MIT"
